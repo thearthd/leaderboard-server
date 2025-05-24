@@ -1,84 +1,85 @@
-const express    = require("express");
+const express = require("express");
 const bodyParser = require("body-parser");
-const cors       = require("cors");
-const fs         = require("fs");
-const path       = require("path");
+const cors = require("cors");
+const fs = require("fs");
 
-const app       = express();
-const DATA_FILE = path.join(__dirname, "leaderboard.json");
+const app = express();
+const DATA_FILE = "leaderboard.json";
 
-// ─── MIDDLEWARE ─────────────────────────────────────────────────
+// Enable CORS for all origins (adjust if you want to restrict)
 app.use(cors());
+
+// Parse JSON bodies
 app.use(bodyParser.json());
 
-// Load existing leaderboard (or start empty)
+// Load leaderboard from file if it exists
 let leaderboard = [];
 if (fs.existsSync(DATA_FILE)) {
   try {
-    leaderboard = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+    const rawData = fs.readFileSync(DATA_FILE, "utf8");
+    leaderboard = JSON.parse(rawData);
   } catch (err) {
     console.error("Failed to read leaderboard.json:", err);
-    leaderboard = [];
   }
 }
 
-// ─── ROUTES ──────────────────────────────────────────────────────
-
-// Home page for quick test
+// HOME PAGE for testing
 app.get("/", (req, res) => {
   res.send(`
     <h1>Leaderboard Server</h1>
-    <p>GET  <a href="/leaderboard">/leaderboard</a></p>
-    <p>POST <code>/leaderboard</code> with JSON <code>{ name, score }</code> or full array</p>
+    <p>Visit <a href="/leaderboard">/leaderboard</a> to view the leaderboard data.</p>
+    <p>POST to <code>/leaderboard/player</code> with JSON <code>{ "name": "playerName", "score": 123 }</code> to add/update a player.</p>
   `);
 });
 
-// GET: return current leaderboard, no caching
+// GET full leaderboard
 app.get("/leaderboard", (req, res) => {
-  res.set("Cache-Control", "no-store");
-  return res.json(leaderboard);
+  res.json(leaderboard);
 });
 
-// POST: accept either a full array or a single { name, score } update
+// POST full leaderboard (replace entire list)
 app.post("/leaderboard", (req, res) => {
-  const body = req.body;
-
-  // Bulk replace if array
-  if (Array.isArray(body)) {
-    leaderboard = body.slice();
-  }
-  // Single update if object with name & score
-  else if (
-    typeof body === "object" &&
-    typeof body.name  === "string" &&
-    typeof body.score === "number"
-  ) {
-    const { name, score } = body;
-    const idx = leaderboard.findIndex(p => p.name === name);
-    if (idx >= 0) {
-      leaderboard[idx].score = score;
-    } else {
-      leaderboard.push({ name, score });
-    }
-  }
-  else {
-    return res
-      .status(400)
-      .json({ success: false, error: "Expected array or {name, score}" });
+  if (!Array.isArray(req.body)) {
+    return res.status(400).json({ success: false, error: "Expected an array of players" });
   }
 
-  // Persist to disk
+  leaderboard = req.body;
+
   try {
     fs.writeFileSync(DATA_FILE, JSON.stringify(leaderboard, null, 2));
-    return res.json({ success: true });
+    res.json({ success: true, message: "Leaderboard replaced" });
   } catch (err) {
-    console.error("Failed to save leaderboard.json:", err);
-    return res.status(500).json({ success: false, error: "File write error" });
+    console.error("Failed to save leaderboard:", err);
+    res.status(500).json({ success: false, error: "File save error" });
   }
 });
 
-// ─── START SERVER ───────────────────────────────────────────────
+// POST single player update/add
+app.post("/leaderboard/player", (req, res) => {
+  const { name, score } = req.body;
+
+  if (typeof name !== "string" || typeof score !== "number") {
+    return res.status(400).json({ success: false, error: "Invalid or missing 'name' or 'score'" });
+  }
+
+  const idx = leaderboard.findIndex(player => player.name === name);
+  if (idx >= 0) {
+    leaderboard[idx].score = score;
+  } else {
+    leaderboard.push({ name, score });
+  }
+
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(leaderboard, null, 2));
+    res.json({ success: true, message: `Player ${name} added/updated` });
+  } catch (err) {
+    console.error("Failed to save player:", err);
+    res.status(500).json({ success: false, error: "File save error" });
+  }
+});
+
+// Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Leaderboard API listening on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Leaderboard API running at http://localhost:${PORT}`);
 });
